@@ -1,9 +1,7 @@
 import streamlit as st
 from duckduckgo_search import DDGS
-import base64
-from io import BytesIO
-import requests
 import time
+import random
 
 # Page configuration
 st.set_page_config(
@@ -28,17 +26,7 @@ st.markdown("""
         margin-bottom: 1.5rem;
         text-align: center;
     }
-    .image-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-        gap: 15px;
-        margin-top: 20px;
-    }
     @media (max-width: 768px) {
-        .image-grid {
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px;
-        }
         h1 {
             font-size: 1.5rem;
         }
@@ -64,61 +52,60 @@ if 'last_search' not in st.session_state:
     st.session_state.last_search = ""
 if 'last_results' not in st.session_state:
     st.session_state.last_results = []
+if 'search_count' not in st.session_state:
+    st.session_state.search_count = 0
 
-# Search function with retry logic
-def search_images(query, max_results=30):
+# Search function with better error handling
+@st.cache_data(ttl=3600, show_spinner=False)
+def search_images_cached(query, search_id):
     """
-    Search for images using DuckDuckGo with retry logic and error handling
+    Cached search function to avoid repeated API calls
     """
-    max_retries = 3
-    retry_delay = 2
-    
-    for attempt in range(max_retries):
-        try:
-            # Create a new DDGS instance for each search
-            ddgs = DDGS(timeout=20)
+    return search_images(query)
+
+def search_images(query, max_results=24):
+    """
+    Search for images using DuckDuckGo with improved error handling
+    """
+    try:
+        # Add random delay to avoid rate limiting
+        time.sleep(random.uniform(1, 2))
+        
+        # Use DDGS with headers to avoid 403
+        with DDGS(headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }, timeout=30) as ddgs:
             
-            results = list(ddgs.images(
+            results = []
+            for r in ddgs.images(
                 keywords=query,
-                max_results=max_results,
-                safesearch='moderate',
                 region='wt-wt',
-                type_image=None
-            ))
+                safesearch='moderate',
+                max_results=max_results
+            ):
+                results.append(r)
+                if len(results) >= max_results:
+                    break
             
-            # Filter out broken image URLs
-            valid_results = []
-            for result in results:
-                if result.get('image') and result['image'].startswith('http'):
-                    valid_results.append(result)
+            # Filter valid results
+            valid_results = [r for r in results if r.get('image') and r['image'].startswith('http')]
             
             return valid_results, None
             
-        except Exception as e:
-            error_msg = str(e)
-            if attempt < max_retries - 1:
-                if 'Ratelimit' in error_msg:
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                else:
-                    time.sleep(1)
-                    continue
-            else:
-                return [], f"Search failed after {max_retries} attempts: {error_msg}"
-    
-    return [], "Search failed: Unknown error"
-
-# Function to verify image URL
-def is_valid_image_url(url):
-    """
-    Check if URL is accessible and returns an image
-    """
-    try:
-        response = requests.head(url, timeout=3, allow_redirects=True)
-        content_type = response.headers.get('content-type', '')
-        return response.status_code == 200 and 'image' in content_type
-    except:
-        return True  # Assume valid if can't verify, let browser handle it
+    except Exception as e:
+        error_msg = str(e)
+        if '403' in error_msg:
+            return [], "DuckDuckGo blocked the request. Please wait 10-15 seconds and try again."
+        elif 'Ratelimit' in error_msg:
+            return [], "Rate limit reached. Please wait 10-15 seconds before searching again."
+        else:
+            return [], f"Search error: {error_msg}"
 
 # Main app
 st.title("🔍 Image Search Engine")
@@ -127,7 +114,8 @@ st.title("🔍 Image Search Engine")
 search_query = st.text_input(
     "",
     placeholder="Search for any images...",
-    label_visibility="collapsed"
+    label_visibility="collapsed",
+    key="search_input"
 )
 
 # Search button
@@ -137,32 +125,32 @@ with col2:
 
 # Perform search
 if search_button and search_query:
-    # Check if this is a new search or same as last
     if search_query != st.session_state.last_search:
+        st.session_state.search_count += 1
+        
         with st.spinner("Searching for images..."):
-            results, error = search_images(search_query, max_results=30)
+            # Use cached function with unique ID to force new search
+            results, error = search_images_cached(search_query, st.session_state.search_count)
             
             if error:
                 st.error(f"⚠️ {error}")
-                st.info("💡 Try again in a few seconds. DuckDuckGo may be rate limiting requests.")
+                st.info("**Quick fix**: Wait 10-15 seconds between searches to avoid rate limits.")
             elif results:
-                # Cache results
                 st.session_state.last_search = search_query
                 st.session_state.last_results = results
-                
-                st.success(f"Found {len(results)} images")
+                st.success(f"✅ Found {len(results)} images")
             else:
                 st.warning("No images found. Try a different search term.")
     else:
-        # Use cached results
         results = st.session_state.last_results
-        st.success(f"Found {len(results)} images")
+        if results:
+            st.success(f"✅ Found {len(results)} images (cached)")
 
-# Display cached results
-if st.session_state.last_results and (search_query == st.session_state.last_search or search_button):
+# Display results
+if st.session_state.last_results and search_query == st.session_state.last_search:
     results = st.session_state.last_results
     
-    # Display images in a grid
+    # Display images in a responsive grid
     cols_per_row = 3
     for idx in range(0, len(results), cols_per_row):
         cols = st.columns(cols_per_row)
@@ -172,39 +160,39 @@ if st.session_state.last_results and (search_query == st.session_state.last_sear
                 img = results[result_idx]
                 with col:
                     try:
-                        # Display image with error handling
                         st.image(
                             img['image'],
                             use_container_width=True,
                             caption=img.get('title', '')[:60]
                         )
-                        # Links
                         st.markdown(
                             f"[🔗 Source]({img.get('url', img['image'])}) | "
                             f"[⬇️ Download]({img['image']})",
                             unsafe_allow_html=True
                         )
-                    except Exception as e:
-                        # Fallback: show as a link if image fails to load
+                    except:
                         st.markdown(
-                            f"**{img.get('title', 'Image')[:50]}**  \n"
                             f"[🖼️ View Image]({img['image']})",
                             unsafe_allow_html=True
                         )
 
 # Instructions
-with st.expander("ℹ️ How to use"):
+with st.expander("ℹ️ Tips to avoid errors"):
     st.markdown("""
-    - **Search freely** - Just type what you're looking for (e.g., "sunset", "cute cats", "vintage cars")
-    - **Download images** - Click the Download link under any image
-    - **View source** - Click Source to see the original webpage
-    - **Rate limiting** - If you get an error, wait 5-10 seconds and try again
+    **If you get a 403 or rate limit error:**
+    1. Wait 10-15 seconds before searching again
+    2. DuckDuckGo limits how many searches you can do quickly
+    3. The app caches results, so searching the same thing twice won't trigger errors
+    
+    **How to use:**
+    - Type anything and hit Search
+    - Click Download to save images
+    - Click Source to see where the image came from
     """)
 
 # Footer
 st.markdown("---")
 st.markdown(
-    "<p style='text-align: center; color: gray;'>Powered by DuckDuckGo | "
-    "Built with Streamlit</p>",
+    "<p style='text-align: center; color: gray;'>Powered by DuckDuckGo | Built with Streamlit</p>",
     unsafe_allow_html=True
 )
