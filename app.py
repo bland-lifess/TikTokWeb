@@ -164,13 +164,13 @@ if st.session_state.last_results and search_query == st.session_state.last_searc
             if result_idx < len(results):
                 img = results[result_idx]
                 with col:
-                    try:
-                        st.image(img['image'], use_container_width=True)
-                        st.caption(img.get('title', 'Image')[:50])
-                        st.markdown(f"[⬇️ Download]({img['image']})")
-                    except:
-                        st.error("Failed to load")
-                        st.markdown(f"[View]({img['image']})")
+                    # Display image using HTML img tag for better compatibility
+                    st.markdown(
+                        f'<img src="{img["image"]}" style="width:100%; border-radius:8px; margin-bottom:10px;">',
+                        unsafe_allow_html=True
+                    )
+                    st.caption(img.get('title', 'Image')[:50])
+                    st.markdown(f"[⬇️ Download]({img['image']}) | [🔗 Open]({img['url']})")
 
 # Examples
 with st.expander("💡 Try these searches"):
