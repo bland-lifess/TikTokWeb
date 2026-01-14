@@ -3,7 +3,7 @@ import requests
 
 # Page configuration
 st.set_page_config(
-    page_title="Image Search Engine",
+    page_title="Fun lil thing",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -116,8 +116,8 @@ def search_all(query):
     return all_results, None
 
 # Main app
-st.title("🔍 GIF & Meme Search")
-st.caption("Powered by Giphy & Tenor - Search for any GIF, meme, or reaction")
+st.title("Memage")
+st.caption("corny ahh name holy 🥀🥀")
 
 # Search input
 search_query = st.text_input(
