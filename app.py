@@ -16,7 +16,7 @@ st.markdown("""
     .stTextInput > div > div > input {font-size: 16px; padding: 12px;}
     h1 {font-size: 2rem; margin-bottom: 1.5rem; text-align: center;}
     @media (max-width: 768px) {h1 {font-size: 1.5rem;}}
-    .stButton button {width: 100%; background-color: #FF4B4B; color: white; border: none; padding: 10px; font-size: 16px; border-radius: 5px;}
+    .stButton button {width: 100%; background-color: #60a3d6; color: white; border: none; padding: 10px; font-size: 16px; border-radius: 5px;}
     img {border-radius: 8px; width: 100%;}
     </style>
 """, unsafe_allow_html=True)
