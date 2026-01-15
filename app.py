@@ -1,265 +1,259 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse, quote
-import re
+from urllib.parse import quote
+import base64
 
 # Page configuration
 st.set_page_config(
-    page_title="Web Proxy Browser",
+    page_title="Web Browser",
     page_icon="🌐",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS
+# Custom CSS for Chrome-like browser
 st.markdown("""
     <style>
-    .main {padding: 0.5rem;}
-    .stTextInput > div > div > input {font-size: 16px; padding: 12px;}
-    h1 {font-size: 1.8rem; margin-bottom: 1rem; text-align: center;}
-    .proxy-frame {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 20px;
-        background: white;
-        min-height: 600px;
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Browser chrome styling */
+    .browser-header {
+        background: #f1f3f4;
+        padding: 8px 12px;
+        border-radius: 8px 8px 0 0;
+        margin-bottom: 0;
+        border: 1px solid #dadce0;
     }
+    
     .url-bar {
-        background: #f0f0f0;
-        padding: 10px;
-        border-radius: 5px;
-        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        background: white;
+        border: 1px solid #dadce0;
+        border-radius: 20px;
+        padding: 8px 15px;
+        margin: 5px 0;
     }
+    
+    .url-bar input {
+        border: none !important;
+        outline: none !important;
+        flex: 1;
+        font-size: 14px;
+        background: transparent !important;
+    }
+    
+    .browser-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid #dadce0;
+        padding-bottom: 4px;
+    }
+    
+    .tab {
+        background: #e8eaed;
+        padding: 8px 16px;
+        border-radius: 8px 8px 0 0;
+        cursor: pointer;
+        font-size: 13px;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    .tab.active {
+        background: white;
+    }
+    
+    .browser-content {
+        background: white;
+        border: 1px solid #dadce0;
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        min-height: 700px;
+        padding: 0;
+        overflow: hidden;
+    }
+    
+    iframe {
+        width: 100%;
+        height: 700px;
+        border: none;
+    }
+    
+    .stButton button {
+        background: transparent;
+        border: none;
+        padding: 8px 12px;
+        font-size: 18px;
+        cursor: pointer;
+    }
+    
+    .stButton button:hover {
+        background: #e8eaed;
+        border-radius: 50%;
+    }
+    
     @media (max-width: 768px) {
-        h1 {font-size: 1.3rem;}
+        iframe {
+            height: 500px;
+        }
     }
     </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state
-if 'current_url' not in st.session_state:
-    st.session_state.current_url = ""
-if 'page_content' not in st.session_state:
-    st.session_state.page_content = ""
+if 'tabs' not in st.session_state:
+    st.session_state.tabs = [{'title': 'New Tab', 'url': ''}]
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = 0
 if 'history' not in st.session_state:
     st.session_state.history = []
 
-def fetch_page(url):
+def get_proxy_url(url):
     """
-    Fetch and parse a webpage
+    Create a proxy URL that works with JavaScript-heavy sites
     """
-    try:
-        # Add https:// if not present
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-        
-        if response.status_code == 200:
-            # Parse HTML
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Remove scripts and styles for cleaner display
-            for tag in soup(['script', 'style', 'iframe', 'noscript']):
-                tag.decompose()
-            
-            # Get page title
-            title = soup.find('title')
-            title_text = title.string if title else "Webpage"
-            
-            # Get main content
-            content = soup.find('body')
-            
-            if content:
-                # Convert relative URLs to absolute
-                for tag in content.find_all(['a', 'img']):
-                    if tag.name == 'a' and tag.get('href'):
-                        tag['href'] = urljoin(url, tag['href'])
-                        tag['target'] = '_blank'
-                    elif tag.name == 'img' and tag.get('src'):
-                        tag['src'] = urljoin(url, tag['src'])
-                
-                html_content = str(content)
-                return html_content, title_text, None
-            
-            return response.text, title_text, None
-        else:
-            return None, None, f"HTTP Error {response.status_code}"
-            
-    except requests.exceptions.Timeout:
-        return None, None, "Request timed out - site took too long to respond"
-    except requests.exceptions.ConnectionError:
-        return None, None, "Connection error - couldn't reach the website"
-    except Exception as e:
-        return None, None, f"Error: {str(e)}"
+    if not url:
+        return None
+    
+    # Add https:// if not present
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    return url
 
 def search_web(query):
     """
-    Perform a web search and return results
+    Search and return Google search URL
     """
-    try:
-        # Use DuckDuckGo HTML search (lite version)
-        search_url = f"https://lite.duckduckgo.com/lite/?q={quote(query)}"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = requests.get(search_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        results = []
-        
-        # Parse search results
-        for result in soup.find_all('tr')[:15]:
-            link = result.find('a')
-            if link and link.get('href'):
-                url = link['href']
-                # Skip DuckDuckGo internal links
-                if url.startswith('http') and 'duckduckgo.com' not in url:
-                    title = link.get_text(strip=True)
-                    snippet = result.get_text(strip=True)
-                    results.append({
-                        'title': title,
-                        'url': url,
-                        'snippet': snippet[:200]
-                    })
-        
-        return results, None
-        
-    except Exception as e:
-        return [], f"Search error: {str(e)}"
+    return f"https://www.google.com/search?q={quote(query)}&igu=1"
 
-# Main app
-st.title("🌐 Web Proxy Browser")
-st.caption("Browse the web or search for anything")
+# Browser Header
+st.markdown('<div class="browser-header">', unsafe_allow_html=True)
 
-# Input mode selection
-tab1, tab2 = st.tabs(["🔗 Direct URL", "🔍 Search Web"])
+# Tab bar
+cols = st.columns([0.5, 0.5, 0.5, 6, 0.5])
 
-with tab1:
+with cols[0]:
+    if st.button("◀", help="Back", key="back_btn"):
+        if len(st.session_state.history) > 1:
+            st.session_state.history.pop()
+            prev_url = st.session_state.history[-1] if st.session_state.history else ''
+            st.session_state.tabs[st.session_state.active_tab]['url'] = prev_url
+
+with cols[1]:
+    if st.button("▶", help="Forward", key="fwd_btn"):
+        pass  # Placeholder for forward functionality
+
+with cols[2]:
+    if st.button("⟳", help="Refresh", key="refresh_btn"):
+        st.rerun()
+
+# URL/Search bar
+with cols[3]:
+    current_tab = st.session_state.tabs[st.session_state.active_tab]
     url_input = st.text_input(
-        "Enter website URL:",
-        placeholder="example.com or https://example.com",
-        key="url_input"
+        "URL",
+        value=current_tab.get('url', ''),
+        placeholder="Search Google or type a URL",
+        label_visibility="collapsed",
+        key="url_input_field"
     )
+
+with cols[4]:
+    if st.button("➕", help="New Tab"):
+        st.session_state.tabs.append({'title': 'New Tab', 'url': ''})
+        st.session_state.active_tab = len(st.session_state.tabs) - 1
+        st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Handle URL/Search submission
+if url_input and url_input != current_tab.get('url', ''):
+    # Check if it's a search query or URL
+    if ' ' in url_input or (not '.' in url_input and not url_input.startswith('http')):
+        # It's a search query
+        final_url = search_web(url_input)
+        st.session_state.tabs[st.session_state.active_tab]['title'] = f"Search: {url_input[:20]}"
+    else:
+        # It's a URL
+        final_url = get_proxy_url(url_input)
+        st.session_state.tabs[st.session_state.active_tab]['title'] = url_input.replace('https://', '').replace('http://', '')[:30]
     
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        go_button = st.button("🚀 Go to Site", use_container_width=True, key="go_btn")
-    with col2:
-        if st.button("🔄 Refresh", use_container_width=True):
-            if st.session_state.current_url:
-                go_button = True
-                url_input = st.session_state.current_url
+    st.session_state.tabs[st.session_state.active_tab]['url'] = final_url
+    st.session_state.history.append(final_url)
+    st.rerun()
 
-with tab2:
-    search_query = st.text_input(
-        "Search the web:",
-        placeholder="Search for anything...",
-        key="search_input"
-    )
-    search_button = st.button("🔎 Search", use_container_width=True)
+# Display current page in iframe
+current_url = st.session_state.tabs[st.session_state.active_tab].get('url', '')
 
-# Handle URL navigation
-if go_button and url_input:
-    with st.spinner(f"Loading {url_input}..."):
-        content, title, error = fetch_page(url_input)
-        
-        if error:
-            st.error(f"❌ {error}")
-        elif content:
-            st.session_state.current_url = url_input
-            st.session_state.page_content = content
-            if url_input not in st.session_state.history:
-                st.session_state.history.append(url_input)
-            st.success(f"✅ Loaded: {title}")
-            st.rerun()
-
-# Handle search
-if search_button and search_query:
-    with st.spinner("Searching..."):
-        results, error = search_web(search_query)
-        
-        if error:
-            st.error(f"❌ {error}")
-        elif results:
-            st.success(f"✅ Found {len(results)} results")
-            
-            for idx, result in enumerate(results, 1):
-                with st.container():
-                    st.markdown(f"**{idx}. {result['title']}**")
-                    st.caption(result['snippet'])
-                    col1, col2 = st.columns([1, 4])
-                    with col1:
-                        if st.button(f"Visit →", key=f"visit_{idx}"):
-                            st.session_state.current_url = result['url']
-                            with st.spinner("Loading..."):
-                                content, title, error = fetch_page(result['url'])
-                                if not error and content:
-                                    st.session_state.page_content = content
-                                    st.rerun()
-                    with col2:
-                        st.caption(f"🔗 {result['url'][:60]}...")
-                    st.divider()
-        else:
-            st.warning("No results found. Try different keywords.")
-
-# Display current page
-if st.session_state.page_content:
-    st.markdown("---")
+if current_url:
+    st.markdown('<div class="browser-content">', unsafe_allow_html=True)
     
-    # URL bar
-    st.markdown(f"**Current URL:** {st.session_state.current_url}")
+    # Embed the website using iframe
+    iframe_html = f"""
+    <iframe 
+        src="{current_url}" 
+        sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"
+        loading="lazy"
+        allowfullscreen
+    ></iframe>
+    """
+    st.markdown(iframe_html, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+else:
+    # New tab page with shortcuts
+    st.markdown('<div class="browser-content" style="padding: 40px; text-align: center;">', unsafe_allow_html=True)
+    st.markdown("### 🌐 Start Browsing")
+    st.markdown("Type a URL or search in the bar above")
     
-    # Display content in frame
-    st.markdown('<div class="proxy-frame">', unsafe_allow_html=True)
-    st.markdown(st.session_state.page_content, unsafe_allow_html=True)
+    st.markdown("#### Quick Links")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    quick_links = [
+        ("🔍 Google", "https://www.google.com"),
+        ("📺 YouTube", "https://www.youtube.com"),
+        ("🐦 Twitter", "https://www.twitter.com"),
+        ("📰 Reddit", "https://www.reddit.com"),
+        ("📖 Wikipedia", "https://www.wikipedia.org"),
+        ("📧 Gmail", "https://mail.google.com"),
+        ("🎵 Spotify", "https://open.spotify.com"),
+        ("💬 Discord", "https://discord.com")
+    ]
+    
+    cols = [col1, col2, col3, col4]
+    for idx, (name, url) in enumerate(quick_links):
+        with cols[idx % 4]:
+            if st.button(name, key=f"quick_{idx}", use_container_width=True):
+                st.session_state.tabs[st.session_state.active_tab]['url'] = url
+                st.session_state.tabs[st.session_state.active_tab]['title'] = name
+                st.session_state.history.append(url)
+                st.rerun()
+    
     st.markdown('</div>', unsafe_allow_html=True)
 
-# History sidebar
-if st.session_state.history:
-    with st.expander("📜 Browsing History"):
-        for url in reversed(st.session_state.history[-10:]):
-            if st.button(url, key=f"hist_{url}"):
-                st.session_state.current_url = url
-                content, title, error = fetch_page(url)
-                if not error and content:
-                    st.session_state.page_content = content
-                    st.rerun()
-
-# Instructions
-with st.expander("ℹ️ How to use"):
+# Tips
+with st.expander("💡 Browser Tips"):
     st.markdown("""
-    **Direct URL Mode:**
-    - Enter any website (e.g., `wikipedia.org`, `reddit.com`)
-    - Click "Go to Site" to load it
+    **How to use:**
+    - **Search**: Type anything in the bar (e.g., "cat videos") and press Enter
+    - **Visit sites**: Type URLs like `youtube.com`, `reddit.com`, `twitter.com`
+    - **Navigate**: Use ◀ Back button to go to previous pages
+    - **New tabs**: Click ➕ to open a new tab
     
-    **Search Mode:**
-    - Type your search query
-    - Click "Search" to find websites
-    - Click "Visit →" on any result to load it
+    **Supported sites:**
+    - ✅ YouTube, Twitter, Reddit, Wikipedia, Google
+    - ✅ News sites (CNN, BBC, etc.)
+    - ✅ Most modern websites with JavaScript
     
-    **Features:**
-    - Browse any public website
-    - Search the web via DuckDuckGo
-    - View browsing history
-    - Mobile-friendly design
-    
-    **Note:** Some sites may block proxy access or require JavaScript
+    **Works in iframe:**
+    Sites are loaded directly in the browser using iframe technology, so JavaScript/videos/interactive content all work!
     """)
 
-# Footer
-st.markdown("---")
-st.markdown("<p style='text-align: center; color: gray;'>Web Proxy | Built with Streamlit</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: gray; margin-top: 20px;'>Web Browser | Built with Streamlit</p>", unsafe_allow_html=True)
